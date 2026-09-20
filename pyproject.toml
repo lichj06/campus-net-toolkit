@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "campus-net-toolkit"
+version = "0.1.0"
+description = "受限网络（校园网/酒店/公司）诊断与绕过工具箱 —— 零依赖"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+keywords = ["network", "dns", "campus", "captive-portal", "diagnostics", "china"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: System :: Networking",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/lichj06/campus-net-toolkit"
+
+[project.scripts]
+campusnet = "campusnet.__main__:main"
+
+[tool.setuptools]
+packages = ["campusnet"]
