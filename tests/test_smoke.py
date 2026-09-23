@@ -177,7 +177,7 @@ class TestRepoPrivacy(unittest.TestCase):
     # 必须写出真实前缀才能当检测项，所以本文件被下面的循环跳过。
     # 注意：批量脱敏脚本很容易连这一行一起替换掉，那会让这个断言变成
     # 「禁止文档地址」的空转 —— 改这一行后一定要重跑本测试。
-    FORBIDDEN = ("10.11.8.", "10.168.8.", "192.0.2.")
+    FORBIDDEN = ("10.11.8.", "10.168.8.", "10.42.11.")
 
     def test_no_private_net_address_in_tracked_text(self):
         root = pathlib.Path(__file__).resolve().parents[1]
