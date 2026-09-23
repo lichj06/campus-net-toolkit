@@ -174,7 +174,10 @@ class TestPinhosts(unittest.TestCase):
 class TestRepoPrivacy(unittest.TestCase):
     """防止真实内网地址再被写回仓库（本文件所在目录里不该出现这些前缀）。"""
 
-    FORBIDDEN = ("192.0.2.", "192.0.2.", "192.0.2.")
+    # 必须写出真实前缀才能当检测项，所以本文件被下面的循环跳过。
+    # 注意：批量脱敏脚本很容易连这一行一起替换掉，那会让这个断言变成
+    # 「禁止文档地址」的空转 —— 改这一行后一定要重跑本测试。
+    FORBIDDEN = ("10.11.8.", "10.168.8.", "192.0.2.")
 
     def test_no_private_net_address_in_tracked_text(self):
         root = pathlib.Path(__file__).resolve().parents[1]
