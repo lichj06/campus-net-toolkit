@@ -84,12 +84,21 @@ def have(cmd):
 
 # ---------- 网络 ----------
 
+_PROBE_TARGET = ("192.0.2.1", 9)   # RFC 5737 TEST-NET-1，仅用于选路，不会真的发包
+
+
 def local_ip():
-    """本机在默认路由上的地址（不会真的发包）。"""
+    """本机在默认路由上的地址。
+
+    对 UDP 套接字调用 connect() 只查路由表、不发包，所以目标地址不需要可达，
+    只要「能匹配上一条默认路由」即可。这里用 192.0.2.1:9（RFC 5737 文档保留段）
+    而不是某个具体网络的解析器地址 —— 后者换到别的网络可能匹配到别的网卡，
+    甚至直接失败，导致上层（lanfind/diagnose）误判成「读不到本机地址」。
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.settimeout(3)
-        s.connect(("192.0.2.53", 53))
+        s.connect(_PROBE_TARGET)
         return s.getsockname()[0]
     except Exception:
         return None
@@ -105,7 +114,3 @@ def local_subnet(prefix_len=24):
     parts = ip.split(".")
     keep = prefix_len // 8
     return ".".join(parts[:keep]) + "."
-
-
-def cidr_hosts(prefix="192.0.2.", start=1, end=254):
-    return [prefix + str(i) for i in range(start, end + 1)]

@@ -12,8 +12,9 @@
 
 为什么 UDP/TCP 要分开测
 -----------------------
-实测遇到过：同一台服务器 UDP 查询 3 秒超时，TCP 查询 3 毫秒返回。
-只测 UDP 会得出「这台不能用」的错误结论。
+有些网络只封 UDP/53 而放行 TCP/53，只测 UDP 会得出「这台不能用」的错误结论。
+两侧的耗时也不一样：在一次真实运行里（见 docs/raw-run-2026-09-23.md），
+同一台解析器 UDP 17ms、TCP 27ms —— 具体数字随网络变化，这里只作量级参考。
 """
 
 import concurrent.futures as cf
@@ -106,9 +107,13 @@ def _default_gateway_impl():
 
 
 def probe(server, name=PROBE_NAME, timeout=PROBE_TIMEOUT):
-    """测一台服务器。返回 dict，含 udp/tcp 各自的结果。"""
+    """测一台服务器。返回 dict，含 udp/tcp 各自的结果与各自的错误。
+
+    udp_error / tcp_error 分开记：结果表里的 ✗ 可能来自三种完全不同的原因
+    （没响应、rcode 非 0、TCP 被 RST），混在一起就没法排障。
+    """
     r = {"server": server, "udp": None, "tcp": None, "udp_ms": None, "tcp_ms": None,
-         "ips": [], "error": None}
+         "ips": [], "error": None, "udp_error": None, "tcp_error": None}
 
     t0 = time.time()
     try:
@@ -118,10 +123,12 @@ def probe(server, name=PROBE_NAME, timeout=PROBE_TIMEOUT):
         if rcode == 0:
             r["ips"] = [v for (_n, t, v) in recs if t == dnsproto.TYPE_A and v]
         else:
-            r["error"] = "rcode=%d" % rcode
+            r["udp_error"] = "rcode=%d" % rcode
+            r["error"] = r["udp_error"]
     except Exception as e:  # noqa: BLE001
         r["udp_ms"] = (time.time() - t0) * 1000
-        r["error"] = "%s: %s" % (type(e).__name__, e)
+        r["udp_error"] = "%s: %s" % (type(e).__name__, e)
+        r["error"] = r["udp_error"]
 
     t0 = time.time()
     try:
@@ -130,8 +137,11 @@ def probe(server, name=PROBE_NAME, timeout=PROBE_TIMEOUT):
         r["tcp_ms"] = (time.time() - t0) * 1000
         if rcode == 0 and not r["ips"]:
             r["ips"] = [v for (_n, t, v) in recs if t == dnsproto.TYPE_A and v]
-    except Exception:
+        elif rcode != 0:
+            r["tcp_error"] = "rcode=%d" % rcode
+    except Exception as e:  # noqa: BLE001
         r["tcp_ms"] = (time.time() - t0) * 1000
+        r["tcp_error"] = "%s: %s" % (type(e).__name__, e)
 
     return r
 
@@ -140,8 +150,10 @@ def collect_candidates():
     """汇总所有候选：(server, 来源说明)。系统配置永远排最前。"""
     cands = []
 
+    # 保留 sysdns 给出的真实来源（/etc/resolv.conf、resolvectl status、scutil …），
+    # 不要统一压成「系统配置」—— 排障时「从哪儿读到这台」和「读到了什么」同样重要。
     for s, src in sysdns.system_dns(with_source=True):
-        cands.append((s, "系统配置"))
+        cands.append((s, src))
 
     gw = default_gateway()
     if gw:
@@ -188,15 +200,20 @@ def run(name=PROBE_NAME, workers=12, quiet=False):
     usable = [r for r in results if r["udp"] or r["tcp"]]
 
     if not quiet:
-        print("  %-16s %-12s %-14s %-14s %s" % ("服务器", "来源", "UDP", "TCP", "解析结果"))
+        print("  %-16s %-18s %-12s %-12s %s" % ("服务器", "来源", "UDP", "TCP", "解析结果"))
         print("  " + "-" * 74)
         for r in results:
             udp = ("%.0fms" % r["udp_ms"]) if r["udp"] else "✗"
             tcp = ("%.0fms" % r["tcp_ms"]) if r["tcp"] else "✗"
-            mark = "  " if (r["udp"] or r["tcp"]) else "  "
+            mark = " "
             ips = ",".join(r["ips"][:2]) if r["ips"] else "-"
-            print("  %s%-14s %-12s %-14s %-14s %s"
+            print("  %s%-14s %-18s %-12s %-12s %s"
                   % (mark, r["server"], r["source"], udp, tcp, ips))
+            # 失败的那一侧，把原因打在下一行 —— 否则 ✗ 分不出「没响应」和「被 RST」
+            if not r["udp"] and r["udp_error"]:
+                print("       └ UDP: %s" % r["udp_error"])
+            if not r["tcp"] and r["tcp_error"]:
+                print("       └ TCP: %s" % r["tcp_error"])
         print()
         util.item("可用服务器", len(usable), 20)
 
@@ -218,34 +235,86 @@ def cmd(args):
     name = args.name or PROBE_NAME
     usable, _ = run(name)
 
-    if usable and getattr(args, "apply", False):
-        _apply([r["server"] for r in usable])
+    if getattr(args, "apply", False):
+        _apply(usable)
     return 0 if usable else 1
 
 
-def _apply(servers):
-    """把可用的服务器写进系统 DNS 配置（尽力而为，失败不影响主流程）。"""
+RESOLV_CONF = "/etc/resolv.conf"
+
+
+def _dual_stack(usable):
+    """只挑「UDP 和 TCP 都通」的服务器。
+
+    为什么宁缺毋滥：只通一侧的服务器写进 resolv.conf 后，glibc 会照用不误，
+    表现就是「偶尔几秒卡一下」。实测这台机器上系统配置里的 192.0.2.99
+    就是这种情况（UDP 8006ms 超时），它不该被任何工具自动写进配置。
+    """
+    return [r for r in usable if r["udp"] and r["tcp"]]
+
+
+def _apply(usable, path=RESOLV_CONF):
+    """把「UDP 和 TCP 都通」的服务器写进系统 DNS 配置。
+
+    写入前先备份，并把恢复命令打出来 —— 这个函数改的是系统文件，
+    用户必须能一条命令退回去。
+    """
     util.head("尝试应用")
+    servers = [r["server"] for r in _dual_stack(usable)]
+    if not servers:
+        util.warn("没有一台服务器 UDP 和 TCP 同时可用 —— 拒绝写入系统配置")
+        util.note("只通一侧的服务器写进去会让解析时快时慢，宁可不改。")
+        for r in usable:
+            util.note("  %-16s UDP=%s  TCP=%s" % (r["server"],
+                                                  "通" if r["udp"] else "不通",
+                                                  "通" if r["tcp"] else "不通"))
+        return False
+
     sysname = util.system()
     if sysname == "windows":
         util.warn("Windows 下改 DNS 需要管理员权限，请手动执行：")
         util.note('Set-DnsClientServerAddress -InterfaceAlias "<网卡名>" '
                   '-ServerAddresses %s' % ",".join(servers[:2]))
-        return
+        return False
     if sysname == "darwin":
         util.warn("macOS 请手动到「系统设置 → 网络 → DNS」里填：")
         util.note("  " + ", ".join(servers[:2]))
-        return
-    # Linux：写 resolv.conf
-    path = "/etc/resolv.conf"
+        return False
+
+    import os
+    import shutil
+
+    if os.path.islink(path):
+        util.warn("%s 是符号链接（systemd-resolved/NetworkManager 托管）" % path)
+        util.note("直接写它不会持久，重启就被覆盖。请改用：resolvectl dns <网卡> %s"
+                  % " ".join(servers[:2]))
+        return False
+
     body = "".join("nameserver %s\n" % s for s in servers[:3])
     body += "options timeout:1 attempts:2\n"
+
+    backup = "%s.bak-%s" % (path, time.strftime("%Y%m%d-%H%M%S"))
+    try:
+        shutil.copy2(path, backup)
+    except FileNotFoundError:
+        backup = None
+        util.note("原 %s 不存在，跳过备份" % path)
+    except Exception as e:  # noqa: BLE001
+        util.fail("备份失败（%s）—— 未做任何修改，原文件保持不动" % e)
+        return False
+
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(body)
-        util.ok("已写入 %s" % path)
-        util.note(body.replace("\n", " | "))
     except Exception as e:  # noqa: BLE001
         util.fail("写入失败（%s）—— 可能需要 root" % e)
         util.note("手动内容：")
         util.note(body.replace("\n", " | "))
+        return False
+
+    util.ok("已写入 %s" % path)
+    util.note(body.replace("\n", " | "))
+    if backup:
+        util.note("原文件已备份：%s" % backup)
+        util.note("恢复命令：sudo cp %s %s" % (backup, path))
+    return True

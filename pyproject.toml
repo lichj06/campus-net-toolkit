@@ -1,11 +1,14 @@
 [build-system]
-requires = ["setuptools>=61"]
+# 钉死构建后端版本：构建要可复现，`>=` 会让两次构建跑在不同版本的后端上。
+# 84.0.0 是打包时本机实测在用的版本：
+#   python3 -c "import setuptools;print(setuptools.__version__)"  ->  84.0.0
+requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "campus-net-toolkit"
 version = "0.1.0"
-description = "受限网络（校园网/酒店/公司）诊断与绕过工具箱 —— 零依赖"
+description = "受限网络（校园网/酒店/公司）诊断与合规适配工具箱 —— 零依赖"
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }

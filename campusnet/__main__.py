@@ -16,12 +16,12 @@ from . import __version__, diagnose, dnsfind, lanfind, pinhosts, watch
 def build_parser():
     p = argparse.ArgumentParser(
         prog="campusnet",
-        description="受限网络（校园网/酒店/公司）诊断与绕过工具箱 —— 零依赖",
+        description="受限网络（校园网/酒店/公司）诊断与合规适配工具箱 —— 零依赖",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""例子:
   campusnet diagnose                    网络体检，一次说清限制在哪
   campusnet dnsfind                     找出这个网络下真正能用的 DNS
-  campusnet dnsfind --apply             顺便写进系统配置
+  campusnet dnsfind --apply             写进系统配置（自动备份 + 给恢复命令）
   campusnet pin api.deepseek.com        把域名钉进 hosts（IP 会做 TLS 校验）
   campusnet pin github.com --dry-run    只看看，不真写
   campusnet unpin github.com            撤掉
@@ -38,7 +38,8 @@ def build_parser():
 
     f = sub.add_parser("dnsfind", help="找出这个网络下能用的 DNS")
     f.add_argument("--name", default="www.baidu.com", help="探针域名")
-    f.add_argument("--apply", action="store_true", help="把结果写进系统配置")
+    f.add_argument("--apply", action="store_true",
+                   help="把结果写进系统配置（写前备份；只写 UDP/TCP 都通的）")
 
     pi = sub.add_parser("pin", help="把域名钉进 hosts")
     pi.add_argument("host", help="域名")
@@ -52,8 +53,8 @@ def build_parser():
 
     l = sub.add_parser("lanfind", help="在局域网里找设备")
     l.add_argument("--prefix", help="要扫的 /24 前缀")
-    l.add_argument("--ports", help="要探测的端口，逗号分隔")
-    l.add_argument("--wide", action="store_true", help="扫更大范围")
+    l.add_argument("--ports", help="要探测的端口，逗号分隔（默认只有通用端口；个人端口须显式指定）")
+    l.add_argument("--wide", action="store_true", help="扫更大范围（相邻 6 个 /24，全部跑完）")
 
     w = sub.add_parser("watch", help="网络看门狗")
     w.add_argument("--target", action="append", metavar="HOST:PORT",

@@ -21,8 +21,12 @@ import time
 
 from . import dnsfind, util
 
-SERVER_PORTS = [80, 443, 22, 445, 3389, 5900, 8080, 8888, 3000, 5000, 8090]
-REMOTE_AGENT_PORTS = [8899, 8898, 8787, 59931, 11434, 7860, 1234]
+# 默认只探「通用服务」端口。
+#
+# 为什么不带个人端口：这个仓库是公开的，默认值里塞进 8899/59931/11434 这类
+# 远控或本地模型端口，等于教别人去扫宿舍网里的个人服务，也容易被安全设备
+# 当成内网探测。要探自己的端口，显式传 --ports 8899,11434。
+COMMON_PORTS = [80, 443, 22, 445, 3389, 8080, 8443]
 
 
 def open_port(host, port, timeout=0.8):
@@ -77,9 +81,11 @@ def run(prefix=None, ports=None, wide=False):
     util.item("默认网关", "%s%s" % (gw or "（读不到）",
                                 "  ← 猜的" if gwsrc == "guess" else ""))
 
-    port_list = ports or (REMOTE_AGENT_PORTS + SERVER_PORTS)
+    port_list = ports or COMMON_PORTS
     util.item("探测端口", ", ".join(str(p) for p in port_list))
     util.note("每个 IP 会依次试这些端口，命中任一个就算「这台有服务」")
+    if not ports:
+        util.note("默认只探通用服务端口。要探自己的端口：--ports 8899,11434")
     print()
 
     ranges = [pre]
@@ -90,10 +96,12 @@ def run(prefix=None, ports=None, wide=False):
     t0 = time.time()
     found = []
     for r in ranges:
+        # 每个区间都跑完：早期版本一有命中就 break，导致 wide 实际只扫了第一个 /24，
+        # 「0 号区间之外一台都没有」这个结论从来没被测过。
         util.note("扫描 %s0/24 ..." % r)
-        found += scan(r, port_list)
-        if found:
-            break
+        hits = scan(r, port_list)
+        util.note("  -> %d 台" % len(hits))
+        found += hits
 
     print()
     util.item("耗时", "%.1f 秒" % (time.time() - t0))

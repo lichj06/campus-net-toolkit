@@ -18,12 +18,11 @@
 """
 
 import datetime
-import json
 import os
 import socket
 import time
 
-from . import diagnose, dnsfind, util
+from . import dnsfind, util
 
 DEFAULT_LOG = "campusnet-watch.log"
 

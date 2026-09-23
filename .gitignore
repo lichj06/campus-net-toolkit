@@ -8,5 +8,7 @@ venv/
 .env
 
 # 运行产物
-campusnet-watch.log
+# watch 的 --log 可以指定任意文件名，所以只忽略 campusnet-watch.log 是不够的：
+# 日志里含本机 IP、内网 DNS、扫描结果，一旦 git add -A 就会把别人校园网的指纹带进仓库。
+*.log
 *-watch.log
